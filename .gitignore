@@ -130,6 +130,9 @@ dmypy.json
 
 # ---
 ~*
-*.tif
-*.png
+_*
+.*
+node_modules/
+dst/
 *.vrt
+*.gpkg

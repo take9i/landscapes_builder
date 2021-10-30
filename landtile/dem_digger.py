@@ -1,12 +1,22 @@
 #%%
+import os
+import sys
 import math
 import numpy as np
 import scipy as sp
-import skimage as ski
+import skimage.draw as skid
 from shapely.geometry import MultiPolygon
 from shapely.ops import cascaded_union
-import road
-import building
+from landtile import tile as ltile
+from landtile import road
+from landtile import building
+from landtile.dem import Dem
+
+
+def crop_dem(src_path, tz, tx, ty, dst_path):
+    proj_str = ltile.get_meter_proj(tz, tx, ty)
+    iw, ih = [int(math.ceil(v)) for v in ltile.get_meter_size(tz, tx, ty)]
+    os.system(f"gdalwarp -t_srs '{proj_str}' -te -100 -100 {iw+100} {ih+100} -tr 1 1 -r bilinear {src_path} {dst_path}")
 
 def get_extent(vs):
     x0, y0 = vs.min(axis=0)[:2]
@@ -31,26 +41,8 @@ def build_xyzs(points, polygon):
     img[Y, X] = Z
 
     vs = np.array(polygon.exterior.coords)
-    R, C = ski.draw.polygon(vs[:, 1], vs[:, 0])
+    R, C = skid.polygon(vs[:, 1], vs[:, 0])
     return np.vstack([C, R, img[R, C]]).T
-
-def plot_for_debug(xyzs, poly, slope_poly):
-    ixmin, ixmax, iymin, iymax = get_extent(xyzs)
-    img = np.zeros((iymax + 1, ixmax + 1))
-    img[xyzs[:, 1].astype(np.int), xyzs[:, 0].astype(np.int)] = xyzs[:, 2]
-
-    import matplotlib
-    matplotlib.rcParams['figure.figsize'] = 16, 16
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots()
-    ax.set_aspect('equal', adjustable='box')
-    # im = ax.imshow(Z, origin='lower', extent=[ixmin, ixmax + 1, iymin, iymax + 1])
-    im = ax.imshow(img[iymin:, ixmin:], origin='lower', extent=[
-                    ixmin - 0.5, ixmax + 0.5, iymin - 0.5, iymax + 0.5])
-    fig.colorbar(im)
-    ax.plot(*poly.exterior.xy, linewidth=0.5)
-    ax.plot(*slope_poly.exterior.xy, linewidth=0.5)
-    plt.show()
 
 def build_road_xyzs(center_line, width, dem):
     def get_points(segments, alts):
@@ -70,7 +62,6 @@ def build_road_xyzs(center_line, width, dem):
         0.5, preserve_topology=False)
     slope_points = get_slope_points(slope_poly, dem)
     xyzs = build_xyzs(np.vstack([xyzs, slope_points]), slope_poly)
-    # plot_for_debug(xyzs, poly, slope_poly)
     return xyzs
 
 def build_building_xyzs(shape, floor, dem):
@@ -82,41 +73,39 @@ def build_building_xyzs(shape, floor, dem):
     slope_poly = shape.buffer(2).simplify(0.5, preserve_topology=False)
     slope_points = get_slope_points(slope_poly, dem)
     xyzs = build_xyzs(np.vstack([xyzs, slope_points]), slope_poly)
-    # plot_for_debug(xyzs, shape, slope_poly)
     return xyzs
 
+# --
+
+def dig(dem_vrt, tz, tx, ty, road_df, bldg_df):
+    os.system(f'rm -f ~~dem_a.tif')
+    crop_dem(dem_vrt, tz, tx, ty, '~~dem_a.tif')
+
+    dem = Dem('~~dem_a.tif')
+    for key, row in road_df.iterrows():
+        try:
+            width = road.get_width(row.rnkWidth, row.Width)
+            xyzs = build_road_xyzs(row.geometry, width, dem)
+            dem.dig(xyzs)
+        except:
+            print(sys.exc_info(), key)
+
+    for key, row in bldg_df.iterrows():
+        try:
+            xyzs = build_building_xyzs(row.geometry, row.floor, dem)
+            dem.dig(xyzs)
+        except:
+            print(sys.exc_info(), key)
+
+    return dem
+
+def undig(dem_vrt, tz, tx, ty):
+    os.system(f'rm -f ~~dem_a.tif')
+    crop_dem(dem_vrt, tz, tx, ty, '~~dem_a.tif')
+    return Dem('~~dem_a.tif')
 
 #%%
-import sys
-import geopandas as gpd
-from dem import Dem
-import road
-import misc
-
 if __name__ == '__main__':
-    # sys.argv = ['foo', '~dem.tif', '15_29105_12903_roads.geojson',
-    #             '15_29105_12903_bldgs.geojson', '~ddem.tif']
-    if len(sys.argv) != 5:
-        sys.exit('usage: src_dem roads_geojson bldgs_geojson dst_dem')
-
-    dem = Dem(sys.argv[1])
-    df = gpd.read_file(sys.argv[2]).rename(columns={'geometry': 'geom'})
-    for key, row in df.iterrows():
-        try:
-            width = road.get_width(row.rnkwidth, row.width)
-            xyzs = build_road_xyzs(row.geom, width, dem)
-            dem.dig(xyzs)
-        except ValueError as e:
-            print(key, e)
-
-    df = gpd.read_file(sys.argv[3]).rename(columns={'geometry': 'geom'})
-    for key, row in df.iterrows():
-        try:
-            xyzs = build_building_xyzs(row.geom, row.floor, dem)
-            dem.dig(xyzs)
-        except ValueError as e:
-            print(key, e)
-        except:
-            print(key, 'dig building any error')
-
-    dem.save(sys.argv[4])
+    Z, X, Y = 15, 29079, 12944
+    dem = dig('xxx_dem.vrt', Z, X, Y)
+    dem.save(f'{Z}_{X}_{Y}_dem.tif')

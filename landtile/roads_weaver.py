@@ -1,26 +1,17 @@
 #%%
-import psycopg2
+import os
+import json
 import geopandas as gpd
 import networkx as nx
 from shapely.geometry import LineString
-import json
 import numpy as np
-import common.tile_utils as tu
-import misc
-
-def get_df(tz, tx, ty):
-    w, s, e, n = tu.get_tile_bounds(tz, tx, ty)
-    sql = f'with tmp as (select st_makeenvelope({w}, {s}, {e}, {n}, 4612) as enve) select type, rdctg, state, lvorder, rnkwidth, width, st_intersection(geom, tmp.enve) as geom from rdcl join tmp on st_intersects(geom, tmp.enve);'
-    conn = psycopg2.connect(database='gsi', user='')
-    df = gpd.GeoDataFrame.from_postgis(sql, conn)
-    proj = misc.get_cesium_proj_str(tz, tx, ty)
-    return df[df.geom.is_valid].to_crs(proj)
+from landtile import tile as ltile
 
 def build_network(df):
     node = lambda coord: '_'.join(map(str, coord))
-    get_edge = lambda r: [node(r.geom.coords[0]), node(r.geom.coords[-1]), 
-                          {k: v for k, v in r.items() if v == v}]
-                          # filter np.nan by 'v == v'  
+    get_edge = lambda r: [
+        node(r.geometry.coords[0]), node(r.geometry.coords[-1]),
+        {k: v for k, v in r.items() if v == v}]  # filter np.nan
     g = nx.Graph()
     g.add_edges_from([get_edge(row) for key, row in df.iterrows()])
     return g
@@ -28,7 +19,7 @@ def build_network(df):
 def weave_roads(g):
     def get_foldable_nodes(g):
         cand_nodes = [v for v, d in g.degree if d == 2]
-        get_class = lambda e: [e[k] for k in e.keys() if k != 'geom']
+        get_class = lambda e: [e[k] for k in e.keys() if k != 'geometry']
         foldable_nodes = []
         for node in cand_nodes:
             edge1, edge2 = [g[node][nb] for nb in g.neighbors(node)]
@@ -51,7 +42,7 @@ def weave_roads(g):
 
         a, b = g.neighbors(node)
         attrs = g[node][a].copy()
-        attrs['geom'] = join_geom(g[node][a]['geom'], g[node][b]['geom'])
+        attrs['geometry'] = join_geom(g[node][a]['geometry'], g[node][b]['geometry'])
         g.remove_node(node)
         g.add_edges_from([(a, b, attrs)])
     
@@ -77,9 +68,9 @@ def write_geojson(g, path):
             'type': 'Feature',
             'geometry': {
                 'type': 'LineString',
-                'coordinates': edge['geom'].coords[:]
+                'coordinates': edge['geometry'].coords[:]
             },
-            'properties': {k:np_conv(v) for k, v in edge.items() if k != 'geom'}
+            'properties': {k:np_conv(v) for k, v in edge.items() if k != 'geometry'}
         }
 
     geoj = {
@@ -88,29 +79,39 @@ def write_geojson(g, path):
     }
     open(path, 'w').write(json.dumps(geoj, ensure_ascii=False))
 
+def write_empty_geojson(path):
+    geoj = {
+        'type': 'FeatureCollection',
+        'features': []
+    }
+    open(path, 'w').write(json.dumps(geoj, ensure_ascii=False))
+
+# --
+
+def weave(shape_gpkg, tz, tx, ty):
+    bbox = ltile.get_bounds(tz, tx, ty)
+    proj = ltile.get_meter_proj(tz, tx, ty)
+    df = gpd.read_file(shape_gpkg, layer='RdCL', bbox=bbox).to_crs(proj)
+    df = df[df.geom_type == 'LineString']
+    df = df[~df.apply(lambda r: r.geometry.is_ring, axis=1)]
+    df = df[(df['type'] == '通常部') & 
+        df.rnkWidth.isin(['3m-5.5m未満', '5.5m-13m未満', '13m-19.5m未満', '19.5m以上'])] 
+
+    os.system(f'rm -f ~~weaved.geojson')
+    if df.empty:
+        write_empty_geojson('~~weaved.geojson')
+        print('there is no target road!')
+    else:
+        g = build_network(df)
+        weave_roads(g)
+        write_geojson(g, '~~weaved.geojson')
+    return gpd.read_file('~~weaved.geojson')
 
 #%%
-import os
-import sys
-
 if __name__ == '__main__':
-    # sys.argv = ['foo', 15, 29080, 12944, 'a.geojson']
-    if len(sys.argv) != 5:
-        sys.exit('usage: tz tx ty dst_geojson')
-        
-    tz, tx, ty = [int(v) for v in sys.argv[1:4]]
-    df = get_df(tz, tx, ty)
-    df = df[(df.geom.type == 'LineString')]
-    df = df[~df.apply(lambda r: r.geom.is_ring, axis=1)]
-    df = df[(df['type'] == '通常部') & 
-        df.rnkwidth.isin(['3m-5.5m未満', '5.5m-13m未満', '13m-19.5m未満', '19.5m以上'])] 
-    if df.empty:
-        raise ValueError('there is no target road')
-
-    g = build_network(df)
-    weave_roads(g)
-    write_geojson(g, sys.argv[4])
-
+    Z, X, Y = 15, 29079, 12944
+    df = weave('~xxx_shape.gpkg', tz, tx, ty)
+    df.to_file(f'{Z}_{X}_{Y}_roads.geojson', driver='GeoJSON')
 
 #%%
 # # plot network

@@ -1,0 +1,12 @@
+version: '3'
+services:
+  landscapes:
+    restart: always
+    build: .
+    container_name: landscapes
+    working_dir: '/Users/'
+    tty: true
+    volumes:
+      - /Users/:/Users
+      - /var/run/docker.sock:/var/run/docker.sock
+

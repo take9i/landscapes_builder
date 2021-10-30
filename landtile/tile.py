@@ -1,5 +1,6 @@
 # zxy tile utility
 import math
+from pyproj import Proj, Transformer
 
 def lonlat2tilenum(zoom, lon_deg, lat_deg):
     lat_rad = math.radians(lat_deg)
@@ -9,16 +10,16 @@ def lonlat2tilenum(zoom, lon_deg, lat_deg):
     return (xtile, ytile)
 
 # gmaps zxy to lonlat (at left-top corner)
-def tilenum2lonlat(zoom, xtile, ytile):
+def num2lonlat(zoom, xtile, ytile):
     n = 2.0 ** zoom
     lon_deg = xtile / n * 360.0 - 180.0
     lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * ytile / n)))
     lat_deg = math.degrees(lat_rad)
     return (lon_deg, lat_deg)
 
-def get_tile_bounds(tz, tx, ty):
-    w, n = tilenum2lonlat(tz, tx, ty)
-    e, s = tilenum2lonlat(tz, tx + 1, ty + 1)
+def get_bounds(tz, tx, ty):
+    w, n = num2lonlat(tz, tx, ty)
+    e, s = num2lonlat(tz, tx + 1, ty + 1)
     return w, s, e, n
 
 def get_children_tiles(tz, tx, ty, at_tz):
@@ -50,3 +51,28 @@ def get_meshcode_bounds(meshcode):
     s, w = meshcode2latlon(meshcode)
     n, e = meshcode2latlon(get_next(meshcode))
     return w, s, e, n
+
+# ---
+
+def get_meter_proj(tz, tx, ty):
+    west, south, _, _ = get_bounds(tz, tx, ty)
+    return f'+proj=tmerc +lat_0={south} +lon_0={west} +k=1.000000 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs'
+
+def get_meter_size(tz, tx, ty):
+    west, south, east, north = get_bounds(tz, tx, ty)
+    t = Transformer.from_crs('epsg:4612', get_meter_proj(tz, tx, ty), always_xy=True)
+    return t.transform(east, north)
+
+# below functions are from mesh.py
+#
+# def get_to_latlon(z, x, y):
+#     west, south, _, _ = tu.get_tile_bounds(z, x, y)
+#     cesium_proj = f"+proj=tmerc +lat_0={south} +lon_0={west} +k=1.000000 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
+#     return partial(pyproj.transform, pyproj.Proj(cesium_proj), pyproj.Proj(init='epsg:4612'))
+
+# def get_width_height(z, x, y):
+#     to_cesium = get_to_cesium(z, x, y)
+#     west, south, east, north = tu.get_tile_bounds(z, x, y)
+#     wx, sy = to_cesium(west, south)
+#     ex, ny = to_cesium(east, north)
+#     return ex - wx, ny - sy
