@@ -1,0 +1,17 @@
+{
+  "name": "create_tile",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "3d-tiles-tools": "^0.1.3",
+    "cesium": "^1.55.0",
+    "obj23dtiles": "^1.0.8",
+    "obj2gltf": "^3.0.4"
+  }
+}
