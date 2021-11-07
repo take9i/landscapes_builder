@@ -82,7 +82,8 @@ json.dump(locs, open(f'{DST_DIR}/gltfs/tiles.json', 'w'), indent=2)
 
 #%%
 # build cesium 3dtiles
-from landtile import tileset_builder as tb
+import json
+import tileset_json_builder as tjb
 
 for kind in ['terrain', 'roads', 'bldgs']:
     os.system(f'mkdir -p {DST_DIR}/{kind}')
@@ -91,7 +92,8 @@ for kind in ['terrain', 'roads', 'bldgs']:
         os.system(f'./node_modules/.bin/obj23dtiles -i {tn}_{kind}.obj -o {DST_DIR}/{kind}/{tn}.b3dm --b3dm')
     os.system(f'for nm in {DST_DIR}/{kind}/*.b3dm; do mv $nm ${{nm%_{kind}.b3dm}}.b3dm; done')
 
-    tb.build(TILES, f'{DST_DIR}/{kind}')
+    json.dump(tjb.build(TILES), open(
+        f'{DST_DIR}/{kind}/_tileset.json', 'w'), indent=2)
 
 #%%
 # sweep obj & mtl files

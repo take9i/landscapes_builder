@@ -1,18 +1,31 @@
 #%%
-import os
+import subprocess
 import json
+import math
+import numpy as np
 from landtile.tile import get_bounds, num2lonlat
 
-def get_base_tileset(tiles, stop_z):
+def get_transform(z, x, y):
+    result = subprocess.Popen(
+        f'./transform.js {z} {x} {y}',
+        stdout=subprocess.PIPE, shell=True
+    ).communicate()[0]
+    return json.loads(result)
+
+def build(tiles):
     def get_geom_error(z):
         return 2 ** (19 - z)
+
+    def get_region(bounds):
+        w, s, e, n = [math.radians(a) for a in bounds]
+        return [w, s, e, n, 0, 100]
 
     def build_tileinfos(z, x, y):
         def get_tileinfo(z, x, y):
             return {
-                'transform': None,
+                'transform': get_transform(z, x, y),
                 'boundingVolume': {
-                    'region': get_bounds(z, x, y)
+                    'region': get_region(get_bounds(z, x, y))
                 },
                 'geometricError': get_geom_error(z),
                 'content': {
@@ -29,12 +42,14 @@ def get_base_tileset(tiles, stop_z):
             del tileinfo['content']
             return tileinfo
 
-    values = lambda i: [t[i] for t in tiles]
-    zs, xs, ys = values(0), values(1), values(2)
-    z, x1, y1, x2, y2 = min(zs), min(xs), min(ys), max(xs) + 1, max(ys) + 1
+    tiles = np.array(tiles, dtype='int32')
+    z = int(min(tiles[:, 0]))
+    x1, x2 = int(min(xs := tiles[:, 1])), int(max(xs) + 1)
+    y1, y2 = int(min(ys := tiles[:, 2])), int(max(ys) + 1)
     w, n = num2lonlat(z, x1, y1)
     e, s = num2lonlat(z, x2, y2)
-    root_bounds = [w, s, e, n]
+    stop_z = z
+
     return {
       'asset': {
         'version': '1.0'
@@ -42,18 +57,13 @@ def get_base_tileset(tiles, stop_z):
       'geometricError': get_geom_error(z),
       'root': {
         'boundingVolume': {
-          'region': root_bounds
+          'region': get_region([w, s, e, n])
         },
         'geometricError': get_geom_error(z),
         'refine': 'REPLACE',
         'children': [build_tileinfos(z, x, y) for x in range(x1, x2) for y in range(y1, y2)]
       }
     }
-
-def build(tiles, dst_dir):
-  stop_z = min([z for (z, x, y) in tiles])
-  open('_tileset.json', 'w').write(json.dumps(get_base_tileset(tiles, stop_z)))
-  os.system(f'./tileset_maker.js _tileset.json {dst_dir}/tileset.json')
 
 #%%
 if __name__ == '__main__':
@@ -67,5 +77,4 @@ if __name__ == '__main__':
       (15, 29079, 12946),  # 江の島岩屋
       (15, 29080, 12946),  # 江の島灯台
   ]
-  DST_DIR = 'dst/gsi_enoshima_5m_unleveled/terrain'
-  build(TILES, DST_DIR)
+  build(TILES)
